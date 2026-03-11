@@ -59,7 +59,7 @@ Scikit-learn
 
 Matplotlib (for visualization)
 
-Frontend (if implemented)
+Frontend 
 
 HTML
 
@@ -67,13 +67,11 @@ CSS
 
 JavaScript
 
-Framework (optional)
+Framework 
 
 Flask / Streamlit
 
 Tools
-
-Jupyter Notebook
 
 Git
 
@@ -105,23 +103,7 @@ Random Forest
 
 Logistic Regression
 
-5. Project Structure
-Smart-Crop-Prediction
-│
-├── dataset
-│   └── crop_data.csv
-│
-├── model
-│   └── crop_prediction_model.py
-│
-├── app
-│   └── app.py
-│
-├── templates
-│   └── index.html
-│
-└── README.md
-6. How to Run the Project
+5. How to Run the Project
 Step 1 — Clone the repository
 git clone https://github.com/yourusername/smart-crop-prediction.git
 Step 2 — Navigate to the project folder
@@ -134,7 +116,7 @@ python app.py
 Open in browser:
 
 http://localhost:5000
-7. Future Enhancements
+6. Future Enhancements
 
 Integration with real-time weather APIs
 
@@ -146,7 +128,7 @@ Crop disease prediction
 
 AI-based yield estimation
 
-8. Learning Outcomes
+7. Learning Outcomes
 
 Applied machine learning in agriculture
 
