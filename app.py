@@ -6,7 +6,6 @@ import cv2
 import joblib
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -45,6 +44,7 @@ def load_disease_model():
         app.logger.warning("Disease model not found (models/disease_model.keras or project root)")
         return None
     try:
+        import tensorflow as tf
         return tf.keras.models.load_model(path)
     except Exception:
         app.logger.exception("Could not load disease model: %s", path)
