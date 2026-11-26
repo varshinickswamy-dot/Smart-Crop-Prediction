@@ -1,179 +1,202 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import tensorflow as tf
-import numpy as np
-import cv2
-import joblib
 import json
 import os
-import pandas as pd
+from pathlib import Path
 
-# ----------------------------------
-# APP INIT
-# ----------------------------------
+import cv2
+import joblib
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from flask import Flask, jsonify, render_template, request
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_DIR = BASE_DIR / "models"
+DATASET_CANDIDATES = [BASE_DIR / "datasets", BASE_DIR.parent / "datasets"]
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+MAX_CONTENT_LENGTH = 10 * 1024 * 1024
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 CORS(app)
 
-# ----------------------------------
-# BASE DIRECTORY
-# ----------------------------------
+def find_asset(filename):
+    candidates = [MODEL_DIR / filename, BASE_DIR / filename]
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-DATASET_DIR = os.path.join(BASE_DIR, "..", "datasets")
+def load_joblib(filename):
+    path = find_asset(filename)
+    if path is None:
+        app.logger.warning("Model asset not found: %s", filename)
+        return None
+    try:
+        return joblib.load(path)
+    except Exception:
+        app.logger.exception("Could not load model asset: %s", path)
+        return None
 
-# ----------------------------------
-# LOAD MODELS
-# ----------------------------------
+def load_disease_model():
+    path = find_asset("disease_model.keras")
+    if path is None:
+        app.logger.warning("Disease model not found (models/disease_model.keras or project root)")
+        return None
+    try:
+        return tf.keras.models.load_model(path)
+    except Exception:
+        app.logger.exception("Could not load disease model: %s", path)
+        return None
 
-disease_model = tf.keras.models.load_model(
-    os.path.join(MODEL_DIR, "disease_model.keras")
-)
+disease_model = load_disease_model()
+crop_model = load_joblib("crop_model.pkl")
+yield_model = load_joblib("yield_model.pkl")
+area_enc = load_joblib("area_encoder.pkl")
+crop_enc = load_joblib("crop_encoder.pkl")
 
-crop_model = joblib.load(
-    os.path.join(MODEL_DIR, "crop_model.pkl")
-)
+labels_path = find_asset("disease_labels.json")
+try:
+    with open(labels_path, "r", encoding="utf-8") as label_file if labels_path else open(os.devnull, "r") as label_file:
+        disease_labels = json.load(label_file) if labels_path else []
+except Exception:
+    app.logger.exception("Could not load disease labels")
+    disease_labels = []
 
-yield_model = joblib.load(
-    os.path.join(MODEL_DIR, "yield_model.pkl")
-)
+def missing_asset_response(feature):
+    return jsonify({
+        "error": f"{feature} is not configured yet. Add its trained model file to the models/ folder and redeploy."
+    }), 503
 
-area_enc = joblib.load(
-    os.path.join(MODEL_DIR, "area_encoder.pkl")
-)
+def find_yield_dataset():
+    for folder in DATASET_CANDIDATES:
+        candidate = folder / "yield.csv"
+        if candidate.is_file():
+            return candidate
+    return None
 
-crop_enc = joblib.load(
-    os.path.join(MODEL_DIR, "crop_encoder.pkl")
-)
-
-with open(os.path.join(MODEL_DIR, "disease_labels.json"), "r") as f:
-    disease_labels = json.load(f)
-
-print("✅ All models loaded successfully")
-
-# ----------------------------------
-# IMAGE PREPROCESS
-# ----------------------------------
-
-def preprocess(img_bytes):
-
-    img = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(img, cv2.IMREAD_COLOR)
-
-    if img is None:
-        raise ValueError("Invalid image file")
-
-    img = cv2.resize(img, (224, 224))
-    img = img / 255.0
-    img = np.expand_dims(img, axis=0)
-
-    return img
-
-
-# ----------------------------------
-# HOME
-# ----------------------------------
+def preprocess_image(image_bytes):
+    image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("The uploaded file is not a valid image.")
+    image = cv2.resize(image, (224, 224))
+    image = image.astype("float32") / 255.0
+    return np.expand_dims(image, axis=0)
 
 @app.route("/")
 def home():
-    return jsonify({"status": "API Running"})
+    return render_template("index.html")
 
-
-# ----------------------------------
-# GET YIELD DATASET OPTIONS
-# ----------------------------------
-
-@app.route("/get-yield-options")
-def get_yield_options():
-
-    df = pd.read_csv(os.path.join(DATASET_DIR, "yield.csv"))
-
-    areas = sorted(df["Area"].unique().tolist())
-    crops = sorted(df["Item"].unique().tolist())
-    years = sorted(df["Year"].unique().tolist())
-
+@app.route("/health")
+def health():
     return jsonify({
-        "areas": areas,
-        "crops": crops,
-        "years": years
+        "status": "ok",
+        "service": "Smart Crop Prediction",
+        "features": {
+            "crop_prediction": crop_model is not None,
+            "disease_detection": disease_model is not None,
+            "yield_prediction": yield_model is not None and area_enc is not None and crop_enc is not None,
+            "yield_options": find_yield_dataset() is not None
+        }
     })
 
-
-# ----------------------------------
-# DISEASE PREDICTION
-# ----------------------------------
+@app.route("/get-yield-options", methods=["GET"])
+def get_yield_options():
+    dataset_path = find_yield_dataset()
+    if dataset_path is None:
+        return jsonify({"error": "yield.csv was not found. Place it in the datasets/ folder."}), 503
+    try:
+        df = pd.read_csv(dataset_path)
+        required = {"Area", "Item", "Year"}
+        if not required.issubset(df.columns):
+            return jsonify({"error": "yield.csv is missing required columns: Area, Item, Year."}), 500
+        return jsonify({
+            "areas": sorted(df["Area"].dropna().astype(str).unique().tolist()),
+            "crops": sorted(df["Item"].dropna().astype(str).unique().tolist()),
+            "years": sorted(int(year) for year in pd.to_numeric(df["Year"], errors="coerce").dropna().unique())
+        })
+    except Exception:
+        app.logger.exception("Could not read yield dataset")
+        return jsonify({"error": "Unable to read yield dataset."}), 500
 
 @app.route("/predict_disease", methods=["POST"])
-def disease():
-
+def predict_disease():
+    if disease_model is None or not disease_labels:
+        return missing_asset_response("Disease detection")
     if "image" not in request.files:
-        return jsonify({"error": "No image uploaded"}), 400
-
+        return jsonify({"error": "Please upload an image using the image field."}), 400
     file = request.files["image"]
-    img = preprocess(file.read())
-
-    pred = disease_model.predict(img)
-    index = int(np.argmax(pred))
-    confidence = float(np.max(pred)) * 100
-
-    disease_name = disease_labels[str(index)] \
-        if isinstance(disease_labels, dict) \
-        else disease_labels[index]
-
-    disease_name = disease_name.replace("___", " - ").replace("_", " ")
-
-    return jsonify({
-        "disease": disease_name,
-        "confidence": round(confidence, 2)
-    })
-
-
-# ----------------------------------
-# CROP RECOMMENDATION
-# ----------------------------------
+    if not file.filename:
+        return jsonify({"error": "No image selected."}), 400
+    extension = secure_filename(file.filename).rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        return jsonify({"error": "Unsupported image format. Use PNG, JPG, JPEG or WEBP."}), 400
+    try:
+        image = preprocess_image(file.read())
+        prediction = disease_model.predict(image, verbose=0)
+        index = int(np.argmax(prediction))
+        confidence = float(np.max(prediction)) * 100
+        if isinstance(disease_labels, dict):
+            disease_name = disease_labels.get(str(index), disease_labels.get(index, f"Class {index}"))
+        else:
+            disease_name = disease_labels[index]
+        disease_name = str(disease_name).replace("___", " - ").replace("_", " ")
+        return jsonify({"disease": disease_name, "confidence": round(confidence, 2)})
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception:
+        app.logger.exception("Disease prediction failed")
+        return jsonify({"error": "Disease prediction failed. Please try another image."}), 500
 
 @app.route("/predict_crop", methods=["POST"])
-def crop():
-
-    d = request.json
-
-    X = [[
-        d["N"],
-        d["P"],
-        d["K"],
-        d["temp"],
-        d["humidity"],
-        d["ph"],
-        d["rainfall"]
-    ]]
-
-    pred = crop_model.predict(X)[0]
-
-    return jsonify({"crop": pred})
-
-
-# ----------------------------------
-# YIELD PREDICTION
-# ----------------------------------
+def predict_crop():
+    if crop_model is None:
+        return missing_asset_response("Crop recommendation")
+    data = request.get_json(silent=True) or {}
+    fields = ["N", "P", "K", "temp", "humidity", "ph", "rainfall"]
+    try:
+        values = [float(data[field]) for field in fields]
+        if not np.all(np.isfinite(values)):
+            raise ValueError
+        prediction = crop_model.predict([values])[0]
+        return jsonify({"crop": str(prediction)})
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "Provide valid numeric values for N, P, K, temp, humidity, ph and rainfall."}), 400
+    except Exception:
+        app.logger.exception("Crop prediction failed")
+        return jsonify({"error": "Crop prediction failed."}), 500
 
 @app.route("/predict_yield", methods=["POST"])
-def yield_pred():
+def predict_yield():
+    if yield_model is None or area_enc is None or crop_enc is None:
+        return missing_asset_response("Yield prediction")
+    data = request.get_json(silent=True) or {}
+    try:
+        area = str(data["area"])
+        crop = str(data["crop"])
+        year = int(data["year"])
+        area_value = int(area_enc.transform([area])[0])
+        crop_value = int(crop_enc.transform([crop])[0])
+        result = float(yield_model.predict([[area_value, crop_value, year]])[0])
+        if not np.isfinite(result):
+            raise ValueError("The model returned an invalid result.")
+        return jsonify({"yield": round(result, 2)})
+    except KeyError:
+        return jsonify({"error": "Provide area, crop and year."}), 400
+    except ValueError as error:
+        return jsonify({"error": str(error) or "Unknown area or crop. Choose a value from the available options."}), 400
+    except Exception:
+        app.logger.exception("Yield prediction failed")
+        return jsonify({"error": "Yield prediction failed."}), 500
 
-    d = request.json
+@app.errorhandler(413)
+def file_too_large(_error):
+    return jsonify({"error": "Image is too large. Maximum upload size is 10 MB."}), 413
 
-    area = area_enc.transform([d["area"]])[0]
-    crop = crop_enc.transform([d["crop"]])[0]
-    year = int(d["year"])
-
-    y = yield_model.predict([[area, crop, year]])[0]
-
-    return jsonify({"yield": round(float(y), 2)})
-
-
-# ----------------------------------
-# START SERVER
-# ----------------------------------
+@app.errorhandler(404)
+def not_found(_error):
+    return jsonify({"error": "The requested endpoint was not found."}), 404
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
