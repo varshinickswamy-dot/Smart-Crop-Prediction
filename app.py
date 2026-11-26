@@ -58,8 +58,11 @@ crop_enc = load_joblib("crop_encoder.pkl")
 
 labels_path = find_asset("disease_labels.json")
 try:
-    with open(labels_path, "r", encoding="utf-8") as label_file if labels_path else open(os.devnull, "r") as label_file:
-        disease_labels = json.load(label_file) if labels_path else []
+    if labels_path:
+        with open(labels_path, "r", encoding="utf-8") as label_file:
+            disease_labels = json.load(label_file)
+    else:
+        disease_labels = []
 except Exception:
     app.logger.exception("Could not load disease labels")
     disease_labels = []
