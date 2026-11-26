@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#123b2a">
+  <meta name="description" content="Smart Crop Prediction - crop recommendation, plant disease detection and yield estimation.">
+  <title>Smart Crop Prediction</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/">🌱 Smart Crop Prediction</a><span class="status" id="service-status">Checking service…</span></header>
+  <main class="container">
+    <section class="hero"><p class="eyebrow">SMART AGRICULTURE</p><h1>Make better farming decisions.</h1><p>Use soil and climate inputs to explore crop recommendations, detect plant diseases and estimate yield.</p></section>
+    <section class="cards">
+      <article class="panel"><div class="panel-icon">🌾</div><h2>Crop recommendation</h2><p>Enter soil nutrients and weather conditions.</p>
+        <form id="crop-form" class="form-grid">
+          <label>Nitrogen (N)<input name="N" type="number" step="any" required></label>
+          <label>Phosphorus (P)<input name="P" type="number" step="any" required></label>
+          <label>Potassium (K)<input name="K" type="number" step="any" required></label>
+          <label>Temperature (°C)<input name="temp" type="number" step="any" required></label>
+          <label>Humidity (%)<input name="humidity" type="number" step="any" required></label>
+          <label>Soil pH<input name="ph" type="number" step="any" min="0" max="14" required></label>
+          <label class="wide">Rainfall (mm)<input name="rainfall" type="number" step="any" min="0" required></label>
+          <button class="wide" type="submit">Recommend crop</button>
+        </form><p class="result" id="crop-result" role="status"></p>
+      </article>
+      <article class="panel"><div class="panel-icon">🍃</div><h2>Plant disease detection</h2><p>Upload a clear image of a plant leaf.</p>
+        <form id="disease-form">
+          <label>Leaf image<input name="image" type="file" accept="image/png,image/jpeg,image/webp" required></label>
+          <button type="submit">Analyze image</button>
+        </form><p class="result" id="disease-result" role="status"></p>
+      </article>
+      <article class="panel"><div class="panel-icon">📈</div><h2>Yield prediction</h2><p>Estimate yield using area, crop and year.</p>
+        <form id="yield-form">
+          <label>Area<input name="area" list="area-options" required><datalist id="area-options"></datalist></label>
+          <label>Crop<input name="crop" list="crop-options" required><datalist id="crop-options"></datalist></label>
+          <label>Year<input name="year" type="number" min="1900" max="2100" required></label>
+          <button type="submit">Predict yield</button>
+        </form><p class="hint" id="yield-hint">Options load when the yield dataset is available.</p><p class="result" id="yield-result" role="status"></p>
+      </article>
+    </section>
+    <footer>Smart Crop Prediction · AI-assisted agricultural decision support</footer>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
